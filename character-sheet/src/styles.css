@@ -81,6 +81,8 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
+/* Installed on a phone, the status bar overlays the page; keep content below it. */
+:root { padding-top: env(safe-area-inset-top, 0px); }
 body {
   margin: 0;
   background: var(--bg);

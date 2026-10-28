@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
 import { fx, perform, sound, centerOf } from '../fx';
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
-import type { Settings } from '../state/storage';
-import { blankCharacter, normalizeCharacter, uid, type Character } from '../systems/dnd5e/model';
+import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
+import { downloadText, makeBackup, parseImport, type MergeResult, type Settings } from '../state/storage';
+import { blankCharacter, uid, type Character } from '../systems/dnd5e/model';
 import { classSummary } from '../systems/dnd5e/rules';
 import { sampleCharacter } from '../systems/dnd5e/sample';
 import { Check, ConfirmButton, Dialog, SelectField } from './ui';
@@ -13,11 +14,13 @@ export function CharactersDialog(props: {
   onSwitch: (id: string) => void;
   onAdd: (c: Character) => void;
   onDelete: (id: string) => void;
+  onRestore: (characters: Character[]) => MergeResult;
   onClose: () => void;
 }) {
   const [mode, setMode] = useState<'list' | 'import' | 'export'>('list');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const current = props.characters.find((c) => c.id === props.currentId)!;
@@ -25,11 +28,13 @@ export function CharactersDialog(props: {
 
   const importText = (raw: string) => {
     try {
-      const c = normalizeCharacter(JSON.parse(raw));
-      props.onAdd({ ...c, id: uid(), isExample: false, updatedAt: Date.now() });
-      props.onClose();
+      const r = props.onRestore(parseImport(raw));
+      setNotice(restoreSummary(r));
+      setText('');
+      setError('');
+      setMode('list');
     } catch (e) {
-      setError(e instanceof SyntaxError ? 'That is not valid JSON. Paste the whole exported file.' : (e as Error).message);
+      setError((e as Error).message);
     }
   };
 
@@ -37,7 +42,7 @@ export function CharactersDialog(props: {
     <Dialog title="Characters" onClose={props.onClose}>
       <div className="seg" role="group" aria-label="Character tools" style={{ marginBottom: 12 }}>
         {(['list', 'import', 'export'] as const).map((m) => (
-          <button key={m} type="button" aria-pressed={mode === m} onClick={() => (setMode(m), setError(''))}>
+          <button key={m} type="button" aria-pressed={mode === m} onClick={() => (setMode(m), setError(''), setNotice(''))}>
             {m === 'list' ? 'My characters' : m === 'import' ? 'Import' : 'Export'}
           </button>
         ))}
@@ -45,6 +50,7 @@ export function CharactersDialog(props: {
 
       {mode === 'list' && (
         <>
+          {notice && <p className="hint" style={{ color: 'var(--good)', marginTop: 0 }}>{notice}</p>}
           <div className="lib">
             {props.characters.map((c) => (
               <div key={c.id} className="item" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 8, padding: '8px 10px', alignItems: 'center' }}>
@@ -81,7 +87,7 @@ export function CharactersDialog(props: {
 
       {mode === 'import' && (
         <>
-          <p className="hint">Choose an exported .json file, or paste its contents.</p>
+          <p className="hint">Choose a backup or an exported character (.json), or paste its contents. If a character is already here, whichever copy was edited most recently is kept.</p>
           <input
             ref={fileRef}
             type="file"
@@ -89,6 +95,7 @@ export function CharactersDialog(props: {
             id="import-file"
             onChange={async (e) => {
               const f = e.target.files?.[0];
+              e.target.value = '';
               if (f) importText(await f.text());
             }}
           />
@@ -119,18 +126,7 @@ export function CharactersDialog(props: {
             >
               {copied ? 'Copied' : 'Copy'}
             </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                const url = URL.createObjectURL(new Blob([exportJson], { type: 'application/json' }));
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${(current.name || 'character').replace(/[^\w-]+/g, '_')}.json`;
-                a.click();
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
-              }}
-            >
+            <button type="button" className="btn" onClick={() => downloadText(`${(current.name || 'character').replace(/[^\w-]+/g, '_')}.json`, exportJson)}>
               Download file
             </button>
           </div>
@@ -161,12 +157,109 @@ const SHOWCASE: { el: (typeof ELEMENTS)[number]['id']; shape: Shape; power: numb
   { el: 'nature', shape: 'burst', power: 1 },
 ];
 
-export function SettingsDialog(props: { settings: Settings; onChange: (s: Settings) => void; onClose: () => void }) {
+const restoreSummary = (r: MergeResult): string =>
+  [r.added && `${r.added} added`, r.updated && `${r.updated} updated`, r.kept && `${r.kept} already up to date`].filter(Boolean).join(', ') || 'Nothing to import.';
+
+function ago(t: number): string {
+  const days = Math.floor((Date.now() - t) / 86_400_000);
+  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+}
+
+function OfflineSection(props: { characters: Character[]; settings: Settings; onChange: (s: Settings) => void; onRestore: (c: Character[]) => MergeResult }) {
+  const pwa = usePwa();
+  const [msg, setMsg] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const last = props.settings.lastBackupAt;
+  return (
+    <>
+      <h3 style={{ margin: 0 }}>Offline &amp; backups</h3>
+      {pwa.mode === 'pwa' ? (
+        <p className="hint" style={{ margin: 0, color: pwa.offlineReady ? 'var(--good)' : undefined }}>
+          {pwa.offlineReady ? 'Ready to work offline on this device. No internet needed after this.' : 'Saving the app for offline use…'}
+        </p>
+      ) : (
+        <p className="hint" style={{ margin: 0 }}>
+          You are running the single-file version. It works offline as long as you keep the file; open it from the same place each time so your saves are found.
+        </p>
+      )}
+      {pwa.mode === 'pwa' &&
+        (pwa.installed ? (
+          <p className="hint" style={{ margin: 0 }}>Installed as an app.</p>
+        ) : pwa.canInstall ? (
+          <button type="button" className="btn primary" onClick={() => void install()}>
+            Install Arcane Folio as an app
+          </button>
+        ) : pwa.ios ? (
+          <p className="hint" style={{ margin: 0 }}>
+            To install on iPhone or iPad: open this page in Safari, tap <b>Share</b>, then <b>Add to Home Screen</b>. Installed, Safari keeps your saves; as a plain website it can clear them after 7 days without a visit.
+          </p>
+        ) : (
+          <p className="hint" style={{ margin: 0 }}>To install, use your browser's <b>Install app</b> option (address bar or menu).</p>
+        ))}
+      {pwa.needRefresh && (
+        <button type="button" className="btn" onClick={applyUpdate}>
+          Update to the new version
+        </button>
+      )}
+      {pwa.persisted === false && (
+        <div className="row">
+          <button type="button" className="btn small" onClick={() => void requestPersist().then((ok) => setMsg(ok ? 'Your browser will keep this data.' : 'Your browser decided for itself; installing the app usually makes it agree.'))}>
+            Ask the browser to keep my data
+          </button>
+        </div>
+      )}
+      {pwa.persisted && <p className="hint" style={{ margin: 0 }}>Storage is protected: the browser won't clear it to free space.</p>}
+      <p className="hint" style={{ margin: 0 }}>
+        Characters live only on this device. Last backup: <b>{last ? ago(last) : 'never'}</b>.
+      </p>
+      <div className="row">
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            const stamp = new Date().toISOString().slice(0, 10);
+            if (downloadText(`arcane-folio-backup-${stamp}.json`, JSON.stringify(makeBackup(props.characters), null, 2))) {
+              props.onChange({ ...props.settings, lastBackupAt: Date.now() });
+              setMsg(`Backed up ${props.characters.length} character${props.characters.length === 1 ? '' : 's'}.`);
+            } else setMsg('This viewer blocks downloads. Use Characters → Export → Copy instead.');
+          }}
+        >
+          Back up all characters
+        </button>
+        <button type="button" className="btn ghost" onClick={() => fileRef.current?.click()}>
+          Restore from a backup
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          id="restore-file"
+          hidden
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (!f) return;
+            try {
+              setMsg(`Restored: ${restoreSummary(props.onRestore(parseImport(await f.text())))}.`);
+            } catch (err) {
+              setMsg((err as Error).message);
+            }
+          }}
+        />
+      </div>
+      {msg && <p className="hint" style={{ margin: 0 }} role="status">{msg}</p>}
+    </>
+  );
+}
+
+export function SettingsDialog(props: { settings: Settings; characters: Character[]; onChange: (s: Settings) => void; onRestore: (c: Character[]) => MergeResult; onClose: () => void }) {
   const s = props.settings;
   const set = (patch: Partial<Settings>) => props.onChange({ ...s, ...patch });
   return (
-    <Dialog title="Effects & sound" onClose={props.onClose}>
+    <Dialog title="Settings" onClose={props.onClose}>
       <div style={{ display: 'grid', gap: 12 }}>
+        <OfflineSection characters={props.characters} settings={s} onChange={props.onChange} onRestore={props.onRestore} />
+        <h3 style={{ margin: '8px 0 0' }}>Effects &amp; sound</h3>
         <SelectField<FxLevel>
           label="Animations"
           id="set-fx"
@@ -217,6 +310,9 @@ export function SettingsDialog(props: { settings: Settings; onChange: (s: Settin
         <button type="button" className="btn small ghost" onClick={() => sound.dice(3)}>
           Test dice sound
         </button>
+        <p className="hint" style={{ margin: 0 }} id="app-version">
+          Arcane Folio {__APP_VERSION__} · built {__BUILD_TIME__.slice(0, 16).replace('T', ' ')} UTC
+        </p>
       </div>
     </Dialog>
   );

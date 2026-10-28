@@ -7,7 +7,8 @@ import { SpellsPanel } from './components/SpellsPanel';
 import { AbilitiesPanel, GlancePanel, IdentityPanel, SkillsPanel } from './components/StatsPanels';
 import { fx, sound } from './fx';
 import { CharacterContext } from './state/character';
-import { defaultSettings, load, save, type Saved, type Settings } from './state/storage';
+import { applyUpdate, dismissReady, usePwa } from './state/pwa';
+import { defaultSettings, load, mergeCharacters, save, type Saved, type Settings } from './state/storage';
 import { TableContext, useTableState } from './state/table';
 import { blankCharacter, type Character } from './systems/dnd5e/model';
 import { classSummary, maxHp } from './systems/dnd5e/rules';
@@ -43,6 +44,7 @@ export default function App() {
   const vignetteRef = useRef<HTMLDivElement>(null);
 
   const char = state.characters.find((c) => c.id === state.currentId) ?? state.characters[0];
+  const pwa = usePwa();
 
   const update = useCallback((fn: (c: Character) => void) => {
     setState((s) => ({
@@ -91,6 +93,11 @@ export default function App() {
   const charApi = useMemo(() => ({ char, update }), [char, update]);
 
   const addCharacter = (c: Character) => setState((s) => ({ ...s, characters: [...s.characters, c], currentId: c.id }));
+  const restore = (incoming: Character[]) => {
+    const result = mergeCharacters(state.characters, incoming);
+    setState((s) => ({ ...s, characters: mergeCharacters(s.characters, incoming).characters }));
+    return result;
+  };
 
   return (
     <CharacterContext.Provider value={charApi}>
@@ -110,7 +117,7 @@ export default function App() {
                 Characters
               </button>
               <button type="button" className="btn small ghost" onClick={() => setDialog('settings')}>
-                Effects
+                Settings
               </button>
             </div>
           </header>
@@ -136,6 +143,25 @@ export default function App() {
                   Keep editing this one
                 </button>
               </span>
+            </div>
+          )}
+          {pwa.needRefresh && (
+            <div className="banner">
+              <span>A new version of Arcane Folio is ready.</span>
+              <button type="button" className="btn small primary" onClick={applyUpdate}>
+                Update now
+              </button>
+            </div>
+          )}
+          {pwa.justBecameReady && (
+            <div className="banner" role="status">
+              <span>
+                <strong>Ready offline.</strong> Arcane Folio is saved on this device and now works without internet.
+                {!pwa.installed && ' Install it from Settings to open it like an app.'}
+              </span>
+              <button type="button" className="btn small ghost" onClick={dismissReady}>
+                Got it
+              </button>
             </div>
           )}
           {saveFailed && <div className="banner">This browser is blocking storage, so changes won't be kept after you close the page. Export your character to keep it.</div>}
@@ -170,6 +196,7 @@ export default function App() {
             currentId={state.currentId}
             onSwitch={(id) => setState((s) => ({ ...s, currentId: id }))}
             onAdd={addCharacter}
+            onRestore={restore}
             onDelete={(id) =>
               setState((s) => {
                 const characters = s.characters.filter((c) => c.id !== id);
@@ -179,7 +206,7 @@ export default function App() {
             onClose={() => setDialog(null)}
           />
         )}
-        {dialog === 'settings' && <SettingsDialog settings={state.settings} onChange={(settings: Settings) => setState((s) => ({ ...s, settings }))} onClose={() => setDialog(null)} />}
+        {dialog === 'settings' && <SettingsDialog settings={state.settings} characters={state.characters} onRestore={restore} onChange={(settings: Settings) => setState((s) => ({ ...s, settings }))} onClose={() => setDialog(null)} />}
 
         <div className="fx-dim" ref={dimRef} aria-hidden="true" />
         <div className="fx-vignette" ref={vignetteRef} aria-hidden="true" />

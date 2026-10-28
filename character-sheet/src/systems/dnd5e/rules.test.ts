@@ -143,3 +143,23 @@ describe('tokens and import', () => {
     expect(() => normalizeCharacter({ system: 'coc7' })).toThrow();
   });
 });
+
+describe('backups', async () => {
+  const { makeBackup, mergeCharacters, parseImport } = await import('../../state/storage');
+  it('round-trips a full backup and a single character', () => {
+    const a = sampleCharacter();
+    const b = blankCharacter();
+    expect(parseImport(JSON.stringify(makeBackup([a, b]))).map((c) => c.name)).toEqual([a.name, b.name]);
+    expect(parseImport(JSON.stringify(a))[0].id).toBe(a.id);
+    expect(() => parseImport('{oops')).toThrow(/valid JSON/);
+  });
+
+  it('keeps whichever copy was edited last', () => {
+    const old = { ...sampleCharacter(), updatedAt: 1 };
+    const newer = { ...old, name: 'Renamed', updatedAt: 2 };
+    expect(mergeCharacters([old], [newer]).characters[0].name).toBe('Renamed');
+    const r = mergeCharacters([newer], [old, blankCharacter()]);
+    expect(r).toMatchObject({ added: 1, updated: 0, kept: 1 });
+    expect(r.characters[0].name).toBe('Renamed');
+  });
+});

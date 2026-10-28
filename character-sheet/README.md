@@ -11,6 +11,23 @@ An animated, auto-calculating character sheet for D&D 5e (2024 rules). Every num
 - **Safe by default.** Screen flashes are capped at two per effect, spaced ≥350 ms apart and kept dim, which stays under the WCAG 2.2 limit of three flashes per second (SC 2.3.1). If your device asks for reduced motion, the sheet starts in reduced mode. Flashes, animations and sound can each be turned off.
 - **Multiple characters**, autosaved in this browser, with JSON import/export for backups.
 
+## Use it offline
+
+There are two standalone versions. Neither needs an account or a server once it's on your device, and neither sends your data anywhere.
+
+| Version | Best for | How |
+| --- | --- | --- |
+| **Installed app** (PWA) | Phones and tablets; desktops too | Open the hosted page once while online, then **Settings → Install** (Chrome, Edge, Android) or **Share → Add to Home Screen** (iPhone/iPad, in Safari). After that first visit it runs fully offline, and updates arrive only when you tap **Update now**. |
+| **Single file** (`arcane-folio.html`) | Laptops and desktops | Build with `npm run build:single` and open `dist-single/index.html` by double-clicking. Fonts, code and sounds are all inside the one file. |
+
+Your characters are stored on the device you use, in the browser's storage for that version. The installed app and the single file each keep their own saves. Use **Settings → Back up all characters** regularly, and **Restore from a backup** to move to another device. Restoring never overwrites a newer local edit: for each character, the copy edited most recently wins.
+
+On iPhone and iPad, install the app rather than using it as a bookmarked website: Safari can delete a website's stored data after 7 days without a visit, but apps added to the Home Screen are exempt ([WebKit, 2020](https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/)).
+
+### Hosting the installed app
+
+`npm run build:pages` writes the app into `../app/`, the `app/` folder at the root of this repository. If GitHub Pages serves this repository from `main`, merging puts the app at `https://death7310.github.io/DnD-Half-Elf-Aasimar/app/`. The offline cache is scoped to `app/`, so the RPG Companion pack files beside it are unaffected. `app/` is generated output: rebuild it rather than editing it.
+
 ## Run it
 
 ```bash
@@ -20,9 +37,8 @@ npm run dev          # local dev server
 npm test             # rules + dice unit tests
 npm run build        # static site in dist/
 npm run build:single # one self-contained HTML file in dist-single/
+npm run build:pages  # installable offline app into ../app/ for GitHub Pages
 ```
-
-The single-file build can be opened straight from disk or hosted anywhere.
 
 ## Code map
 
@@ -33,6 +49,7 @@ The single-file build can be opened straight from disk or hosted anywhere.
 | `src/fx/engine.ts` | Canvas particle engine (element × motion) |
 | `src/fx/sound.ts` | Procedural Web Audio sound effects |
 | `src/state/table.ts` | What happens when you click: roll, apply to the sheet, play the effect |
+| `src/state/storage.ts`, `src/state/pwa.ts` | Autosave, backups and restore; offline install and updates |
 | `src/components/` | Sheet panels, dice tray, dialogs |
 
 ## Roadmap
@@ -42,4 +59,4 @@ The single-file build can be opened straight from disk or hosted anywhere.
 
 ## Licensing
 
-Game mechanics in `src/systems/dnd5e/` follow the System Reference Document 5.2 by Wizards of the Coast LLC, licensed under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). Spell descriptions are short paraphrases, not rules text. Call of Cthulhu (Chaosium) and World of Darkness (Paradox Interactive) have no open rules licence. Support for them should ship mechanics only and let players enter their own content.
+Fonts (Alegreya SC, Alegreya Sans, IBM Plex Mono) are bundled from Fontsource under the SIL Open Font License 1.1. Game mechanics in `src/systems/dnd5e/` follow the System Reference Document 5.2 by Wizards of the Coast LLC, licensed under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). Spell descriptions are short paraphrases, not rules text. Call of Cthulhu (Chaosium) and World of Darkness (Paradox Interactive) have no open rules licence. Support for them should ship mechanics only and let players enter their own content.
